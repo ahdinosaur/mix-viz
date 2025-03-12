@@ -7,7 +7,6 @@ use rand::{random_range, rng, seq::IndexedRandom};
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_systems(PreStartup, init_resources)
         .add_systems(Startup, (init_camera, init_peers, init_places))
         .add_systems(
             Update,
@@ -58,11 +57,6 @@ struct FavoritePlaces {
 #[derive(Component, Default)]
 #[require(Camera2d)]
 struct Camera;
-
-fn init_resources(mut commands: Commands) {
-    commands.init_resource::<Assets<Mesh>>();
-    commands.init_resource::<Time>();
-}
 
 fn init_camera(mut commands: Commands) {
     commands.spawn(Camera);
