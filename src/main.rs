@@ -20,14 +20,14 @@ fn main() {
 }
 
 #[derive(Component, Default)]
-#[require(Position, Target, Mesh2d)]
+#[require(Position, Mesh2d)]
 struct Peer;
 
 #[derive(Component, Default)]
 #[require(Position, Mesh2d)]
 struct Place;
 
-#[derive(Component, Default, Clone)]
+#[derive(Component, Default, Debug, Copy, Clone)]
 struct Position {
     x: f32,
     y: f32,
@@ -44,7 +44,7 @@ impl Position {
 
 #[derive(Component, Default)]
 struct Target {
-    next: Option<Position>,
+    position: Position,
 }
 
 /*
@@ -106,36 +106,41 @@ fn update_transform_from_position(mut query: Query<(&Position, &mut Transform)>)
     }
 }
 
-fn update_position_from_target(time: Res<Time>, mut query: Query<(&Target, &mut Position)>) {
+fn update_position_from_target(
+    time: Res<Time>,
+    mut query: Query<(Option<&Target>, &mut Position)>,
+) {
     let speed = 100.0; // units per second
 
-    for (target, mut position) in &mut query {
-        if let Some(next) = &target.next {
-            // Calculate the difference vector from current position to target position
-            let dx = next.x - position.x;
-            let dy = next.y - position.y;
-            // Compute the distance to the target
-            let distance = (dx * dx + dy * dy).sqrt();
+    for (maybe_target, mut position) in &mut query {
+        let Some(target) = maybe_target else {
+            continue;
+        };
+        // Calculate the difference vector from current position to target position
+        let dx = target.position.x - position.x;
+        let dy = target.position.y - position.y;
+        // Compute the distance to the target
+        let distance = (dx * dx + dy * dy).sqrt();
 
-            if distance > 0.0 {
-                // Calculate how much to move this frame
-                let step = speed * time.delta_secs();
-                if step >= distance {
-                    // If we can reach (or overshoot) the target this frame, snap to it.
-                    position.x = next.x;
-                    position.y = next.y;
-                } else {
-                    // Move proportionally in the direction of the target
-                    position.x += dx / distance * step;
-                    position.y += dy / distance * step;
-                }
+        if distance > 0.0 {
+            // Calculate how much to move this frame
+            let step = speed * time.delta_secs();
+            if step >= distance {
+                // If we can reach (or overshoot) the target this frame, snap to it.
+                position.x = target.position.x;
+                position.y = target.position.y;
+            } else {
+                // Move proportionally in the direction of the target
+                position.x += dx / distance * step;
+                position.y += dy / distance * step;
             }
         }
     }
 }
 
 fn update_peer_targets(
-    mut peers_query: Query<(&Peer, &Position, &mut Target)>,
+    mut commands: Commands,
+    peers_query: Query<(Entity, &Position, Option<&Target>), With<Peer>>,
     places_query: Query<(&Place, &Position)>,
 ) {
     let place_positions: Vec<Position> = places_query
@@ -144,18 +149,23 @@ fn update_peer_targets(
         .cloned()
         .collect();
 
-    for (_, position, mut target) in &mut peers_query {
-        // Has peer reached it's target?
-        if let Some(next) = &target.next {
-            if next.x == position.x && next.y == position.y {
-                // Reset target
-                target.next = None;
+    for (peer_entity, position, maybe_target) in peers_query.iter() {
+        match maybe_target {
+            Some(target) => {
+                // If the peer already has a target and has reached it...
+                if target.position.x == position.x && target.position.y == position.y {
+                    // Remove the target component to indicate "no target"
+                    commands.entity(peer_entity).remove::<Target>();
+                }
             }
-        }
-
-        // If peer has no target
-        if target.next.is_none() {
-            target.next = place_positions.choose(&mut rng()).cloned();
+            None => {
+                // If the peer has no target, choose a random place position
+                if let Some(new_target) = place_positions.choose(&mut rng()).cloned() {
+                    commands.entity(peer_entity).insert(Target {
+                        position: new_target,
+                    });
+                }
+            }
         }
     }
 }
