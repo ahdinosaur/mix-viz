@@ -7,7 +7,10 @@ use rand::{random_range, rng, seq::IndexedRandom};
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_systems(Startup, (init_camera, init_peers, init_places))
+        .add_systems(
+            Startup,
+            (init_camera, init_places, init_peers.after(init_places)),
+        )
         .add_systems(
             Update,
             (
@@ -20,7 +23,7 @@ fn main() {
 }
 
 #[derive(Component, Default)]
-#[require(Position, Mesh2d)]
+#[require(Position, FavoritePlaces, Mesh2d)]
 struct Peer;
 
 #[derive(Component, Default)]
@@ -47,12 +50,10 @@ struct Target {
     position: Position,
 }
 
-/*
 #[derive(Component, Default)]
 struct FavoritePlaces {
     places: Vec<Entity>,
 }
-*/
 
 #[derive(Component, Default)]
 #[require(Camera2d)]
@@ -60,24 +61,6 @@ struct Camera;
 
 fn init_camera(mut commands: Commands) {
     commands.spawn(Camera);
-}
-
-fn init_peers(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-) {
-    const NUM_PEERS: usize = 100;
-    let mesh = meshes.add(Circle::new(10_f32));
-    let material = materials.add(ColorMaterial::from_color(RED));
-    for _ in 0..NUM_PEERS {
-        commands.spawn((
-            Peer,
-            Position::random(),
-            Mesh2d(mesh.clone()),
-            MeshMaterial2d(material.clone()),
-        ));
-    }
 }
 
 fn init_places(
@@ -95,6 +78,30 @@ fn init_places(
             Position::random(),
             Mesh2d(mesh.clone()),
             MeshMaterial2d(material.clone()),
+        ));
+    }
+}
+
+fn init_peers(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    places_query: Query<Entity, With<Place>>,
+) {
+    let places: Vec<Entity> = places_query.iter().collect();
+
+    const NUM_PEERS: usize = 100;
+    let mesh = meshes.add(Circle::new(10_f32));
+    let material = materials.add(ColorMaterial::from_color(RED));
+    for _ in 0..NUM_PEERS {
+        commands.spawn((
+            Peer,
+            Position::random(),
+            Mesh2d(mesh.clone()),
+            MeshMaterial2d(material.clone()),
+            FavoritePlaces {
+                places: places.choose_multiple(&mut rng(), 3).cloned().collect(),
+            },
         ));
     }
 }
@@ -140,16 +147,10 @@ fn update_position_from_target(
 
 fn update_peer_targets(
     mut commands: Commands,
-    peers_query: Query<(Entity, &Position, Option<&Target>), With<Peer>>,
-    places_query: Query<(&Place, &Position)>,
+    peers_query: Query<(Entity, &Position, Option<&Target>, &FavoritePlaces), With<Peer>>,
+    places_query: Query<&Position, With<Place>>,
 ) {
-    let place_positions: Vec<Position> = places_query
-        .iter()
-        .map(|(_, position)| position)
-        .cloned()
-        .collect();
-
-    for (peer_entity, position, maybe_target) in peers_query.iter() {
+    for (peer_entity, position, maybe_target, favorite_places) in peers_query.iter() {
         match maybe_target {
             Some(target) => {
                 // If the peer already has a target and has reached it...
@@ -159,7 +160,14 @@ fn update_peer_targets(
                 }
             }
             None => {
-                // If the peer has no target, choose a random place position
+                // If the peer has no target, choose a random place from favorites.
+                let place_positions: Vec<Position> = favorite_places
+                    .places
+                    .iter()
+                    .filter_map(|&place_entity| places_query.get(place_entity).ok())
+                    .cloned()
+                    .collect();
+
                 if let Some(new_target) = place_positions.choose(&mut rng()).cloned() {
                     commands.entity(peer_entity).insert(Target {
                         position: new_target,
